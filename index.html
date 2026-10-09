@@ -2708,9 +2708,9 @@
             typingChannel = supabaseClient.channel(chName, { config: { broadcast: { self: false } } });
             typingChannel.on('broadcast', { event: 'typing' }, (p) => {
                 if (!p || !p.payload) return;
-                if (p.payload.to !== currentUser.id) return;
+                if (String(p.payload.to) !== String(currentUser.id)) return;
                 if (currentChatType !== 'private') return;
-                if (!currentChatFriend || currentChatFriend.id !== p.payload.from) return;
+                if (!currentChatFriend || String(currentChatFriend.id) !== String(p.payload.from)) return;
                 if (currentRoomId !== p.payload.room) return;
                 showTypingIndicator();
             });
@@ -2767,22 +2767,273 @@
             } catch (e) { alert('切换摄像头失败'); }
         }
 
-        function cleanupCall() { if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; } if (pc) { pc.close(); pc = null; } const aud = document.getElementById('remote-audio'); if (aud) aud.srcObject = null; document.getElementById('local-video').srcObject = null; document.getElementById('remote-video').srcObject = null; document.getElementById('call-screen').classList.add('hidden'); document.getElementById('incoming-call-modal').classList.add('hidden'); document.getElementById('voice-call-ui').classList.add('hidden'); document.getElementById('video-call-info').classList.remove('hidden'); document.getElementById('remote-video').style.display = 'block'; const micBtn = document.getElementById('mic-btn'); if (micBtn) micBtn.classList.remove('muted'); const camBtn = document.getElementById('camera-btn'); if (camBtn) camBtn.classList.remove('muted'); currentOffer = null; }
-        async function startCall(type) { if (!currentChatFriend) return; callType = type; cleanupCall(); document.getElementById('call-screen').classList.remove('hidden'); updateCallControls(); if (type === 'audio') { document.getElementById('voice-call-ui').classList.remove('hidden'); document.getElementById('video-call-info').classList.add('hidden'); document.getElementById('remote-video').style.display = 'none'; document.getElementById('voice-call-avatar').innerText = currentChatFriend.name[0].toUpperCase(); document.getElementById('voice-call-name').innerText = currentChatFriend.name; document.getElementById('voice-call-status').innerText = '正在呼叫...'; } else { document.getElementById('voice-call-ui').classList.add('hidden'); document.getElementById('video-call-info').classList.remove('hidden'); document.getElementById('remote-video').style.display = 'block'; document.getElementById('call-title').innerText = '正在呼叫 ' + currentChatFriend.name + '...'; document.getElementById('call-status').innerText = '视频通话'; } try { localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' }); document.getElementById('local-video').srcObject = localStream; } catch (e) { alert('无法获取摄像头/麦克风'); cleanupCall(); return; } pc = new RTCPeerConnection(rtcConfig); localStream.getTracks().forEach(track => pc.addTrack(track, localStream)); pc.ontrack = (event) => { const stream = event.streams[0]; const hasVideo = stream.getVideoTracks().length > 0; if (hasVideo) { const vid = document.getElementById('remote-video'); vid.srcObject = stream; vid.style.display = 'block'; vid.play().catch(e => console.log('Video play blocked', e)); document.getElementById('voice-call-ui').classList.add('hidden'); document.getElementById('video-call-info').classList.remove('hidden'); document.getElementById('call-status').innerText = '通话中'; } else { const aud = document.getElementById('remote-audio'); aud.srcObject = stream; aud.play().catch(e => console.log('Audio play blocked', e)); document.getElementById('voice-call-status').innerText = '通话中'; } }; pc.onicecandidate = (event) => { if (event.candidate) callChannel.send({ type: 'broadcast', event: 'ice-candidate', payload: { to: currentChatFriend.id, candidate: event.candidate } }); }; const offer = await pc.createOffer(); await pc.setLocalDescription(offer); callChannel.send({ type: 'broadcast', event: 'call-offer', payload: { from: currentUser.id, to: currentChatFriend.id, type: type, sdp: offer } }); }
-        async function acceptCall() { if (!currentOffer) return; callType = currentOffer.type; document.getElementById('incoming-call-modal').classList.add('hidden'); document.getElementById('call-screen').classList.remove('hidden'); updateCallControls(); if (callType === 'audio') { document.getElementById('voice-call-ui').classList.remove('hidden'); document.getElementById('video-call-info').classList.add('hidden'); document.getElementById('remote-video').style.display = 'none'; document.getElementById('voice-call-avatar').innerText = '好友'; document.getElementById('voice-call-name').innerText = '好友'; document.getElementById('voice-call-status').innerText = '连接中...'; } else { document.getElementById('voice-call-ui').classList.add('hidden'); document.getElementById('video-call-info').classList.remove('hidden'); document.getElementById('remote-video').style.display = 'block'; document.getElementById('call-status').innerText = '视频通话'; } try { localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' }); document.getElementById('local-video').srcObject = localStream; } catch (e) { rejectCall(); return; } pc = new RTCPeerConnection(rtcConfig); localStream.getTracks().forEach(track => pc.addTrack(track, localStream)); pc.ontrack = (event) => { const stream = event.streams[0]; const hasVideo = stream.getVideoTracks().length > 0; if (hasVideo) { const vid = document.getElementById('remote-video'); vid.srcObject = stream; vid.style.display = 'block'; vid.play().catch(e => console.log('Video play blocked', e)); document.getElementById('voice-call-ui').classList.add('hidden'); document.getElementById('video-call-info').classList.remove('hidden'); document.getElementById('call-status').innerText = '通话中'; } else { const aud = document.getElementById('remote-audio'); aud.srcObject = stream; aud.play().catch(e => console.log('Audio play blocked', e)); document.getElementById('voice-call-status').innerText = '通话中'; } }; pc.onicecandidate = (event) => { if (event.candidate) callChannel.send({ type: 'broadcast', event: 'ice-candidate', payload: { to: currentOffer.from, candidate: event.candidate } }); }; await pc.setRemoteDescription(currentOffer.sdp); const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); callChannel.send({ type: 'broadcast', event: 'call-answer', payload: { to: currentOffer.from, sdp: answer } }); currentOffer = null; }
+        function cleanupCall() {
+            if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+            if (pc) { pc.close(); pc = null; }
+            const aud = document.getElementById('remote-audio'); if (aud) aud.srcObject = null;
+            document.getElementById('local-video').srcObject = null;
+            document.getElementById('remote-video').srcObject = null;
+            document.getElementById('call-screen').classList.add('hidden');
+            document.getElementById('incoming-call-modal').classList.add('hidden');
+            document.getElementById('voice-call-ui').classList.add('hidden');
+            document.getElementById('video-call-info').classList.remove('hidden');
+            document.getElementById('remote-video').style.display = 'block';
+            const micBtn = document.getElementById('mic-btn'); if (micBtn) micBtn.classList.remove('muted');
+            const camBtn = document.getElementById('camera-btn'); if (camBtn) camBtn.classList.remove('muted');
+            currentOffer = null;
+        }
+
+        async function startCall(type) {
+            if (!currentChatFriend) return;
+
+            // 关键修复 3：确保频道已订阅成功再发消息
+            if (!callChannel || callChannel.state !== 'joined') {
+                console.log('[轻聊] 等待 callChannel 订阅...');
+                let ok = false;
+                for (let i = 0; i < 25; i++) {
+                    if (callChannel && callChannel.state === 'joined') { ok = true; break; }
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                if (!ok) { alert('通话频道连接失败，请检查网络后重试'); return; }
+            }
+
+            callType = type;
+            cleanupCall();
+            document.getElementById('call-screen').classList.remove('hidden');
+            updateCallControls();
+
+            if (type === 'audio') {
+                document.getElementById('voice-call-ui').classList.remove('hidden');
+                document.getElementById('video-call-info').classList.add('hidden');
+                document.getElementById('remote-video').style.display = 'none';
+                document.getElementById('voice-call-avatar').innerText = currentChatFriend.name[0].toUpperCase();
+                document.getElementById('voice-call-name').innerText = currentChatFriend.name;
+                document.getElementById('voice-call-status').innerText = '正在呼叫...';
+            } else {
+                document.getElementById('voice-call-ui').classList.add('hidden');
+                document.getElementById('video-call-info').classList.remove('hidden');
+                document.getElementById('remote-video').style.display = 'block';
+                document.getElementById('call-title').innerText = '正在呼叫 ' + currentChatFriend.name + '...';
+                document.getElementById('call-status').innerText = '视频通话';
+            }
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' });
+                document.getElementById('local-video').srcObject = localStream;
+            } catch (e) {
+                alert('无法获取摄像头/麦克风');
+                cleanupCall();
+                return;
+            }
+
+            pc = new RTCPeerConnection(rtcConfig);
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.ontrack = (event) => {
+                const stream = event.streams[0];
+                const hasVideo = stream.getVideoTracks().length > 0;
+                if (hasVideo) {
+                    const vid = document.getElementById('remote-video');
+                    vid.srcObject = stream;
+                    vid.style.display = 'block';
+                    vid.play().catch(e => console.log('Video play blocked', e));
+                    document.getElementById('voice-call-ui').classList.add('hidden');
+                    document.getElementById('video-call-info').classList.remove('hidden');
+                    document.getElementById('call-status').innerText = '通话中';
+                } else {
+                    const aud = document.getElementById('remote-audio');
+                    aud.srcObject = stream;
+                    aud.play().catch(e => console.log('Audio play blocked', e));
+                    document.getElementById('voice-call-status').innerText = '通话中';
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    callChannel.send({
+                        type: 'broadcast',
+                        event: 'ice-candidate',
+                        payload: { to: currentChatFriend.id, candidate: event.candidate }
+                    });
+                }
+            };
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+
+            // 关键修复 2：显式序列化 SDP，不要传 RTCSessionDescription 对象
+            const offerSdp = { type: offer.type, sdp: offer.sdp };
+            callChannel.send({
+                type: 'broadcast',
+                event: 'call-offer',
+                payload: {
+                    from: currentUser.id,
+                    to: currentChatFriend.id,
+                    type: type,
+                    sdp: offerSdp
+                }
+            });
+            console.log('[轻聊] 已发送 call-offer 给', currentChatFriend.id);
+        }
+
+        async function acceptCall() {
+            if (!currentOffer) return;
+            callType = currentOffer.type;
+            document.getElementById('incoming-call-modal').classList.add('hidden');
+            document.getElementById('call-screen').classList.remove('hidden');
+            updateCallControls();
+
+            if (callType === 'audio') {
+                document.getElementById('voice-call-ui').classList.remove('hidden');
+                document.getElementById('video-call-info').classList.add('hidden');
+                document.getElementById('remote-video').style.display = 'none';
+                document.getElementById('voice-call-avatar').innerText = '好友';
+                document.getElementById('voice-call-name').innerText = '好友';
+                document.getElementById('voice-call-status').innerText = '连接中...';
+            } else {
+                document.getElementById('voice-call-ui').classList.add('hidden');
+                document.getElementById('video-call-info').classList.remove('hidden');
+                document.getElementById('remote-video').style.display = 'block';
+                document.getElementById('call-status').innerText = '视频通话';
+            }
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' });
+                document.getElementById('local-video').srcObject = localStream;
+            } catch (e) { rejectCall(); return; }
+
+            pc = new RTCPeerConnection(rtcConfig);
+            localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+            pc.ontrack = (event) => {
+                const stream = event.streams[0];
+                const hasVideo = stream.getVideoTracks().length > 0;
+                if (hasVideo) {
+                    const vid = document.getElementById('remote-video');
+                    vid.srcObject = stream;
+                    vid.style.display = 'block';
+                    vid.play().catch(e => console.log('Video play blocked', e));
+                    document.getElementById('voice-call-ui').classList.add('hidden');
+                    document.getElementById('video-call-info').classList.remove('hidden');
+                    document.getElementById('call-status').innerText = '通话中';
+                } else {
+                    const aud = document.getElementById('remote-audio');
+                    aud.srcObject = stream;
+                    aud.play().catch(e => console.log('Audio play blocked', e));
+                    document.getElementById('voice-call-status').innerText = '通话中';
+                }
+            };
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    callChannel.send({
+                        type: 'broadcast',
+                        event: 'ice-candidate',
+                        payload: { to: currentOffer.from, candidate: event.candidate }
+                    });
+                }
+            };
+
+            // 关键修复：显式转回 RTCSessionDescription
+            await pc.setRemoteDescription(new RTCSessionDescription(currentOffer.sdp));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            // 关键修复：显式序列化 answer SDP
+            const answerSdp = { type: answer.type, sdp: answer.sdp };
+            callChannel.send({
+                type: 'broadcast',
+                event: 'call-answer',
+                payload: { to: currentOffer.from, sdp: answerSdp }
+            });
+            currentOffer = null;
+        }
+
         function rejectCall() { if (currentOffer) { callChannel.send({ type: 'broadcast', event: 'call-reject', payload: { to: currentOffer.from } }); currentOffer = null; } cleanupCall(); }
         async function hangUp() { if (callChannel && currentChatFriend) callChannel.send({ type: 'broadcast', event: 'call-hangup', payload: { from: currentUser.id, to: currentChatFriend.id } }); cleanupCall(); }
         function toggleMic() { if (!localStream) return; const t = localStream.getAudioTracks()[0]; if (!t) return; t.enabled = !t.enabled; const btn = document.getElementById('mic-btn'); if (btn) btn.classList.toggle('muted', !t.enabled); }
         function toggleCamera() { if (!localStream) return; const t = localStream.getVideoTracks()[0]; if (!t) return; t.enabled = !t.enabled; const btn = document.getElementById('camera-btn'); if (btn) btn.classList.toggle('muted', !t.enabled); }
+
         function initCallSignaling() {
-            if (callChannel) { try { callChannel.unsubscribe(); } catch(e) {} callChannel = null; }
-            callChannel = supabaseClient.channel('call-signaling', { config: { broadcast: { self: false } } });
-            callChannel.on('broadcast', { event: 'call-offer' }, (p) => { if (p.payload.to === currentUser.id) { currentOffer = p.payload; currentChatFriend = { id: p.payload.from, name: '好友' }; document.getElementById('incoming-call-name').innerText = '好友来电'; document.getElementById('incoming-call-type').innerText = p.payload.type === 'video' ? '请求视频通话...' : '请求语音通话...'; document.getElementById('incoming-call-modal').classList.remove('hidden'); } });
-            callChannel.on('broadcast', { event: 'call-answer' }, async (p) => { if (p.payload.to === currentUser.id && pc) { await pc.setRemoteDescription(p.payload.sdp); } });
-            callChannel.on('broadcast', { event: 'ice-candidate' }, async (p) => { if (p.payload.to === currentUser.id && pc) try { await pc.addIceCandidate(p.payload.candidate); } catch(e) {} });
-            callChannel.on('broadcast', { event: 'call-hangup' }, (p) => { if (p.payload.to === currentUser.id) cleanupCall(); });
-            callChannel.on('broadcast', { event: 'call-reject' }, (p) => { if (p.payload.to === currentUser.id) { alert('对方拒绝了通话'); cleanupCall(); } });
-            callChannel.subscribe();
+            if (callChannel) {
+                try { callChannel.unsubscribe(); } catch(e) {}
+                callChannel = null;
+            }
+
+            callChannel = supabaseClient.channel('call-signaling-v3', {
+                config: { broadcast: { self: false } }
+            });
+
+            // ============ call-offer ============
+            callChannel.on('broadcast', { event: 'call-offer' }, (p) => {
+                try {
+                    console.log('[轻聊] 收到 call-offer:', p);
+                    if (!p || !p.payload) return;
+                    // 关键修复 1：用 String() 比较，兼容 number/string
+                    if (String(p.payload.to) !== String(currentUser.id)) {
+                        console.log('[轻聊] call-offer 不是发给我的，忽略');
+                        return;
+                    }
+                    currentOffer = p.payload;
+                    currentChatFriend = { id: p.payload.from, name: '好友' };
+                    document.getElementById('incoming-call-name').innerText = '好友来电';
+                    document.getElementById('incoming-call-type').innerText =
+                        p.payload.type === 'video' ? '请求视频通话...' : '请求语音通话...';
+                    document.getElementById('incoming-call-modal').classList.remove('hidden');
+                    console.log('[轻聊] 来电弹窗已显示');
+                } catch (e) { console.error('[轻聊] 处理 call-offer 失败:', e); }
+            });
+
+            // ============ call-answer ============
+            callChannel.on('broadcast', { event: 'call-answer' }, async (p) => {
+                try {
+                    console.log('[轻聊] 收到 call-answer:', p);
+                    if (!p || !p.payload) return;
+                    if (String(p.payload.to) !== String(currentUser.id)) return;
+                    if (!pc) { console.warn('[轻聊] 收到 answer 但 pc 为 null'); return; }
+                    // 关键修复 2：显式转回 RTCSessionDescription
+                    await pc.setRemoteDescription(new RTCSessionDescription(p.payload.sdp));
+                } catch (e) { console.error('[轻聊] 处理 call-answer 失败:', e); }
+            });
+
+            // ============ ice-candidate ============
+            callChannel.on('broadcast', { event: 'ice-candidate' }, async (p) => {
+                try {
+                    if (!p || !p.payload) return;
+                    if (String(p.payload.to) !== String(currentUser.id)) return;
+                    if (!pc) return;
+                    await pc.addIceCandidate(new RTCIceCandidate(p.payload.candidate));
+                } catch (e) { console.error('[轻聊] 处理 ice-candidate 失败:', e); }
+            });
+
+            // ============ call-hangup ============
+            callChannel.on('broadcast', { event: 'call-hangup' }, (p) => {
+                try {
+                    if (!p || !p.payload) return;
+                    if (String(p.payload.to) !== String(currentUser.id)) return;
+                    console.log('[轻聊] 对方挂断');
+                    cleanupCall();
+                } catch (e) { console.error(e); }
+            });
+
+            // ============ call-reject ============
+            callChannel.on('broadcast', { event: 'call-reject' }, (p) => {
+                try {
+                    if (!p || !p.payload) return;
+                    if (String(p.payload.to) !== String(currentUser.id)) return;
+                    console.log('[轻聊] 对方拒绝');
+                    alert('对方拒绝了通话');
+                    cleanupCall();
+                } catch (e) { console.error(e); }
+            });
+
+            callChannel.subscribe((status, err) => {
+                console.log('[轻聊] callChannel 订阅状态:', status, err || '');
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    console.warn('[轻聊] callChannel 订阅失败，3 秒后重试');
+                    setTimeout(() => { try { initCallSignaling(); } catch(e) {} }, 3000);
+                }
+            });
         }
 
         function toggleSettings() {
