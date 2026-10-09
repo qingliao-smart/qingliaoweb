@@ -1510,7 +1510,23 @@
         let pendingVoiceBlob = null;
         let pendingVoiceDuration = 0;
         const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-        const speechSupported = !!SpeechRecognitionCtor;
+        let speechSupported = !!SpeechRecognitionCtor;   // ✅ 改成 let，方便运行时禁用
+
+        // ✅ 关键修复 1：安卓环境预检，避免"未找到 Google 引擎"
+        //    国产浏览器、WebView、HBuilderX 打包的 APK 都不带 Google 语音服务
+        (function detectSpeechEngine() {
+            if (!speechSupported) return;
+            const ua = navigator.userAgent || '';
+            const isAndroid = /Android/i.test(ua);
+            const isPureChrome = /Chrome\/\d+/.test(ua) &&
+                !/Edg|Edge|OPR|UCBrowser|Quark|MQQBrowser|MiuiBrowser|HuaweiBrowser|VivoBrowser|HeytapBrowser|baidubrowser|SamsungBrowser|WeChat|MicroMessenger|QQBrowser|LieBao|Sogou/i.test(ua);
+            const isSamsungInternet = /SamsungBrowser/i.test(ua);
+            const isWebView = /; wv\)/.test(ua);
+            if (isAndroid && (!isPureChrome || isWebView) && !isSamsungInternet) {
+                console.log('[轻聊] 安卓非纯 Chrome 环境，自动禁用语音识别（避免"未找到Google引擎"）');
+                speechSupported = false;
+            }
+        })();
 
         const processedMsgIds = new Set();
         let groupMutedMap = JSON.parse(localStorage.getItem('groupMutedMap') || '{}');
@@ -2600,9 +2616,24 @@
                     if (finals) speechFinalTranscript += finals;
                     speechInterimTranscript = interims;
                 };
-                speechRecognition.onerror = () => {};
+                // ✅ 关键修复 2：捕获运行时错误，永久禁用，避免反复弹"未找到 Google 引擎"
+                speechRecognition.onerror = (evt) => {
+                    console.warn('[轻聊] 语音识别错误:', evt.error);
+                    if (evt.error === 'service-not-allowed' ||
+                        evt.error === 'language-not-supported' ||
+                        evt.error === 'network' ||
+                        evt.error === 'aborted') {
+                        speechSupported = false;
+                        try { speechRecognition.stop(); } catch(_) {}
+                        speechRecognition = null;
+                    }
+                };
                 speechRecognition.start();
-            } catch (e) { speechRecognition = null; }
+            } catch (e) {
+                console.warn('[轻聊] 语音识别启动失败:', e);
+                speechSupported = false;
+                speechRecognition = null;
+            }
         }
         function stopSpeechRecognition() { if (speechRecognition) { try { speechRecognition.stop(); } catch (e) {} speechRecognition = null; } }
         function getCurrentTranscript() { return (speechFinalTranscript + speechInterimTranscript).trim(); }
@@ -2814,12 +2845,29 @@
             } catch (e) { alert('切换摄像头失败'); }
         }
 
+        // ✅ 关键修复 3：挂断时停止一切音频采集，避免"持续录音"
         function cleanupCall() {
+            // 1. 停止 WebRTC 本地媒体流
             if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
             if (pc) { pc.close(); pc = null; }
+
+            // 2. 停止语音识别（它单独持有麦克风，不停的话安卓红点一直亮）
+            stopSpeechRecognition();
+
+            // 3. 如果正在录语音消息，也一并停止
+            if (isRecording) {
+                try { mediaRecorder && mediaRecorder.stop(); } catch(e) {}
+                isRecording = false;
+                const vbtn = document.getElementById('voice-btn');
+                if (vbtn) vbtn.classList.remove('recording');
+            }
+
+            // 4. 清空 audio/video 元素
             const aud = document.getElementById('remote-audio'); if (aud) aud.srcObject = null;
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
+
+            // 5. UI 复原
             document.getElementById('call-screen').classList.add('hidden');
             document.getElementById('incoming-call-modal').classList.add('hidden');
             document.getElementById('voice-call-ui').classList.add('hidden');
@@ -2827,8 +2875,9 @@
             document.getElementById('remote-video').style.display = 'block';
             const micBtn = document.getElementById('mic-btn'); if (micBtn) micBtn.classList.remove('muted');
             const camBtn = document.getElementById('camera-btn'); if (camBtn) camBtn.classList.remove('muted');
+
             currentOffer = null;
-            pendingIceCandidates = [];   // ✅ 清空缓存
+            pendingIceCandidates = [];
         }
 
         async function startCall(type) {
