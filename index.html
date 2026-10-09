@@ -554,6 +554,7 @@
             border-top: 1px solid var(--border);
             display: flex; align-items: center; gap: 6px;
             position: relative;
+            z-index: 50;
         }
         .input-area > .icon-btn, .input-area > .send-btn { flex-shrink: 0; }
         .input-wrapper {
@@ -584,24 +585,51 @@
 
         .recording { background: var(--danger) !important; color: #FFF !important; animation: recBlink 1s infinite; }
 
+        /* ============================================================
+           表情托盘（已加大 + 修复穿模）
+           ============================================================ */
         .emoji-picker {
             position: absolute;
-            bottom: calc(100% + 8px); left: 20px;
-            background: var(--surface); border: 1px solid var(--border);
-            border-radius: var(--r-lg); padding: 10px;
-            box-shadow: var(--shadow-lg);
-            display: grid; grid-template-columns: repeat(8, 1fr);
-            gap: 2px; z-index: 150; width: 288px;
+            bottom: calc(100% + 12px);
+            left: 20px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--r-lg);
+            padding: 14px;
+            box-shadow: var(--shadow-xl);
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 6px;
+            z-index: 400;
+            width: 400px;
+            max-height: 340px;
+            overflow-y: auto;
+            overflow-x: hidden;
             animation: msgPop 0.2s ease;
+            -webkit-overflow-scrolling: touch;
         }
+        .emoji-picker::-webkit-scrollbar { width: 6px; }
+        .emoji-picker::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        .emoji-picker::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
         .emoji-btn {
-            background: transparent; border: none; font-size: 20px;
-            padding: 6px; border-radius: var(--r-sm); cursor: pointer;
-            transition: background 0.14s; line-height: 1;
-            display: flex; align-items: center; justify-content: center;
+            background: transparent;
+            border: none;
+            font-size: 24px;
+            padding: 6px;
+            border-radius: var(--r-sm);
+            cursor: pointer;
+            transition: background 0.14s, transform 0.14s;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 40px;
+            min-height: 40px;
+            width: 100%;
+            aspect-ratio: 1 / 1;
         }
-        .emoji-btn:hover { background: var(--surface-hover); }
-        .emoji-btn:active { background: var(--surface-active); transform: scale(0.9); }
+        .emoji-btn:hover { background: var(--surface-hover); transform: scale(1.12); }
+        .emoji-btn:active { background: var(--surface-active); transform: scale(0.92); }
 
         .lightbox {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -998,12 +1026,18 @@
             .panel { transition: none; }
             .modal-content { transition: transform 0.26s ease; }
 
+            /* 移动端表情托盘全宽，避免溢出屏幕 */
             .emoji-picker {
-                left: 12px; right: 12px;
+                left: 12px;
+                right: 12px;
                 width: auto;
-                bottom: calc(100% + 6px);
+                bottom: calc(100% + 8px);
                 grid-template-columns: repeat(8, 1fr);
+                padding: 10px;
+                gap: 4px;
+                max-height: 260px;
             }
+            .emoji-btn { font-size: 22px; padding: 5px; min-width: 36px; min-height: 36px; }
         }
 
         @media (max-width: 480px) {
@@ -1042,6 +1076,9 @@
             .privacy-body { max-height: 58vh; font-size: 12.5px; }
             #login-box { padding: 24px; }
             .app-title { font-size: 28px; }
+
+            .emoji-picker { max-height: 220px; padding: 8px; gap: 3px; }
+            .emoji-btn { font-size: 20px; padding: 4px; min-width: 32px; min-height: 32px; }
         }
 
         @media (max-width: 360px) {
@@ -1054,6 +1091,8 @@
             .send-btn { width: 30px; height: 30px; }
             .send-btn svg { width: 14px; height: 14px; }
             .header-title-block h3 { font-size: 14px; }
+
+            .emoji-btn { font-size: 18px; min-width: 28px; min-height: 28px; }
         }
     </style>
 </head>
@@ -1441,8 +1480,16 @@
         let currentUser = null, mediaRecorder = null, audioChunks = [], isRecording = false, recordStartTime = 0;
         let onlineChannel = null, currentRoomId = 'public', currentChatType = 'public', currentGroupId = null, currentChatFriend = null;
         let pendingRequestId = null, allUsersCache = [], localStream = null, callChannel = null, pc = null, currentOffer = null;
+        let pendingIceCandidates = [];   // ✅ 关键修复：缓存 pc 创建前收到的 ICE 候选
         let friendsMap = {}, myGroups = [];
-        const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        const rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' },
+                { urls: 'stun:stun.miwifi.com:3478' },
+                { urls: 'stun:stun.chat.bilibili.com:3478' }
+            ]
+        };
         let badWordsEnabled = JSON.parse(localStorage.getItem('badWordsEnabled')) !== false;
         let badWordsList = JSON.parse(localStorage.getItem('badWordsList')) || [];
         let avatarCache = {};
@@ -2781,12 +2828,16 @@
             const micBtn = document.getElementById('mic-btn'); if (micBtn) micBtn.classList.remove('muted');
             const camBtn = document.getElementById('camera-btn'); if (camBtn) camBtn.classList.remove('muted');
             currentOffer = null;
+            pendingIceCandidates = [];   // ✅ 清空缓存
         }
 
         async function startCall(type) {
             if (!currentChatFriend) return;
 
-            // 关键修复 3：确保频道已订阅成功再发消息
+            // 关键修复：提前抓取值到局部常量，避免回调里 currentChatFriend 被清空
+            const peerId = currentChatFriend.id;
+            const peerName = currentChatFriend.name;
+
             if (!callChannel || callChannel.state !== 'joined') {
                 console.log('[轻聊] 等待 callChannel 订阅...');
                 let ok = false;
@@ -2806,14 +2857,14 @@
                 document.getElementById('voice-call-ui').classList.remove('hidden');
                 document.getElementById('video-call-info').classList.add('hidden');
                 document.getElementById('remote-video').style.display = 'none';
-                document.getElementById('voice-call-avatar').innerText = currentChatFriend.name[0].toUpperCase();
-                document.getElementById('voice-call-name').innerText = currentChatFriend.name;
+                document.getElementById('voice-call-avatar').innerText = peerName[0].toUpperCase();
+                document.getElementById('voice-call-name').innerText = peerName;
                 document.getElementById('voice-call-status').innerText = '正在呼叫...';
             } else {
                 document.getElementById('voice-call-ui').classList.add('hidden');
                 document.getElementById('video-call-info').classList.remove('hidden');
                 document.getElementById('remote-video').style.display = 'block';
-                document.getElementById('call-title').innerText = '正在呼叫 ' + currentChatFriend.name + '...';
+                document.getElementById('call-title').innerText = '正在呼叫 ' + peerName + '...';
                 document.getElementById('call-status').innerText = '视频通话';
             }
 
@@ -2853,7 +2904,7 @@
                     callChannel.send({
                         type: 'broadcast',
                         event: 'ice-candidate',
-                        payload: { to: currentChatFriend.id, candidate: event.candidate }
+                        payload: { to: peerId, candidate: event.candidate }   // ✅ 用局部常量
                     });
                 }
             };
@@ -2861,24 +2912,37 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            // 关键修复 2：显式序列化 SDP，不要传 RTCSessionDescription 对象
+            // ✅ flush 缓存的候选（极少情况对方候选先到）
+            if (pendingIceCandidates.length > 0) {
+                for (const c of pendingIceCandidates) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e) {}
+                }
+                pendingIceCandidates = [];
+            }
+
             const offerSdp = { type: offer.type, sdp: offer.sdp };
             callChannel.send({
                 type: 'broadcast',
                 event: 'call-offer',
                 payload: {
                     from: currentUser.id,
-                    to: currentChatFriend.id,
+                    to: peerId,                                            // ✅ 用局部常量
                     type: type,
                     sdp: offerSdp
                 }
             });
-            console.log('[轻聊] 已发送 call-offer 给', currentChatFriend.id);
+            console.log('[轻聊] 已发送 call-offer 给', peerId);
         }
 
         async function acceptCall() {
             if (!currentOffer) return;
-            callType = currentOffer.type;
+
+            // ✅ 关键修复：提前抓取 from 到局部常量，避免 currentOffer = null 后回调报错
+            const peerId = currentOffer.from;
+            const remoteSdp = currentOffer.sdp;
+            const offerType = currentOffer.type;
+
+            callType = offerType;
             document.getElementById('incoming-call-modal').classList.add('hidden');
             document.getElementById('call-screen').classList.remove('hidden');
             updateCallControls();
@@ -2929,32 +2993,65 @@
                     callChannel.send({
                         type: 'broadcast',
                         event: 'ice-candidate',
-                        payload: { to: currentOffer.from, candidate: event.candidate }
+                        payload: { to: peerId, candidate: event.candidate }   // ✅ 用局部常量
                     });
                 }
             };
 
-            // 关键修复：显式转回 RTCSessionDescription
-            await pc.setRemoteDescription(new RTCSessionDescription(currentOffer.sdp));
+            await pc.setRemoteDescription(new RTCSessionDescription(remoteSdp));
+
+            // ✅ flush 缓存的候选
+            if (pendingIceCandidates.length > 0) {
+                console.log('[轻聊] 开始 flush 缓存的 candidate，共', pendingIceCandidates.length, '个');
+                for (const c of pendingIceCandidates) {
+                    try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e) { console.warn('addIce 失败', e); }
+                }
+                pendingIceCandidates = [];
+            }
+
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
 
-            // 关键修复：显式序列化 answer SDP
             const answerSdp = { type: answer.type, sdp: answer.sdp };
             callChannel.send({
                 type: 'broadcast',
                 event: 'call-answer',
-                payload: { to: currentOffer.from, sdp: answerSdp }
+                payload: { to: peerId, sdp: answerSdp }   // ✅ 用局部常量
             });
             currentOffer = null;
         }
 
-        function rejectCall() { if (currentOffer) { callChannel.send({ type: 'broadcast', event: 'call-reject', payload: { to: currentOffer.from } }); currentOffer = null; } cleanupCall(); }
-        async function hangUp() { if (callChannel && currentChatFriend) callChannel.send({ type: 'broadcast', event: 'call-hangup', payload: { from: currentUser.id, to: currentChatFriend.id } }); cleanupCall(); }
+        function rejectCall() {
+            if (currentOffer) {
+                callChannel.send({ type: 'broadcast', event: 'call-reject', payload: { to: currentOffer.from } });
+                currentOffer = null;
+            }
+            cleanupCall();
+        }
+
+        async function hangUp() {
+            if (callChannel && currentChatFriend) {
+                try {
+                    callChannel.send({
+                        type: 'broadcast',
+                        event: 'call-hangup',
+                        payload: { from: currentUser.id, to: currentChatFriend.id }
+                    });
+                } catch (e) {}
+            }
+            cleanupCall();
+        }
+
         function toggleMic() { if (!localStream) return; const t = localStream.getAudioTracks()[0]; if (!t) return; t.enabled = !t.enabled; const btn = document.getElementById('mic-btn'); if (btn) btn.classList.toggle('muted', !t.enabled); }
         function toggleCamera() { if (!localStream) return; const t = localStream.getVideoTracks()[0]; if (!t) return; t.enabled = !t.enabled; const btn = document.getElementById('camera-btn'); if (btn) btn.classList.toggle('muted', !t.enabled); }
 
         function initCallSignaling() {
+            // ✅ 防重复订阅：已 joined 直接跳过
+            if (callChannel && callChannel.state === 'joined') {
+                console.log('[轻聊] callChannel 已订阅，跳过重建');
+                return;
+            }
+
             if (callChannel) {
                 try { callChannel.unsubscribe(); } catch(e) {}
                 callChannel = null;
@@ -2969,7 +3066,6 @@
                 try {
                     console.log('[轻聊] 收到 call-offer:', p);
                     if (!p || !p.payload) return;
-                    // 关键修复 1：用 String() 比较，兼容 number/string
                     if (String(p.payload.to) !== String(currentUser.id)) {
                         console.log('[轻聊] call-offer 不是发给我的，忽略');
                         return;
@@ -2991,7 +3087,6 @@
                     if (!p || !p.payload) return;
                     if (String(p.payload.to) !== String(currentUser.id)) return;
                     if (!pc) { console.warn('[轻聊] 收到 answer 但 pc 为 null'); return; }
-                    // 关键修复 2：显式转回 RTCSessionDescription
                     await pc.setRemoteDescription(new RTCSessionDescription(p.payload.sdp));
                 } catch (e) { console.error('[轻聊] 处理 call-answer 失败:', e); }
             });
@@ -3001,8 +3096,14 @@
                 try {
                     if (!p || !p.payload) return;
                     if (String(p.payload.to) !== String(currentUser.id)) return;
-                    if (!pc) return;
+                    // ✅ 关键修复：pc 未就绪时先缓存
+                    if (!pc || !pc.remoteDescription) {
+                        console.log('[轻聊] pc 未就绪，缓存 candidate，当前缓存数:', pendingIceCandidates.length + 1);
+                        pendingIceCandidates.push(p.payload.candidate);
+                        return;
+                    }
                     await pc.addIceCandidate(new RTCIceCandidate(p.payload.candidate));
+                    console.log('[轻聊] addIceCandidate 成功');
                 } catch (e) { console.error('[轻聊] 处理 ice-candidate 失败:', e); }
             });
 
@@ -3029,8 +3130,9 @@
 
             callChannel.subscribe((status, err) => {
                 console.log('[轻聊] callChannel 订阅状态:', status, err || '');
-                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-                    console.warn('[轻聊] callChannel 订阅失败，3 秒后重试');
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                    console.warn('[轻聊] callChannel 断开，3 秒后重试');
+                    callChannel = null;
                     setTimeout(() => { try { initCallSignaling(); } catch(e) {} }, 3000);
                 }
             });
