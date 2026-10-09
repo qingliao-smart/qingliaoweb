@@ -586,7 +586,7 @@
         .recording { background: var(--danger) !important; color: #FFF !important; animation: recBlink 1s infinite; }
 
         /* ============================================================
-           表情托盘（已加大 + 修复穿模）
+           表情托盘
            ============================================================ */
         .emoji-picker {
             position: absolute;
@@ -1026,7 +1026,6 @@
             .panel { transition: none; }
             .modal-content { transition: transform 0.26s ease; }
 
-            /* 移动端表情托盘全宽，避免溢出屏幕 */
             .emoji-picker {
                 left: 12px;
                 right: 12px;
@@ -1480,7 +1479,8 @@
         let currentUser = null, mediaRecorder = null, audioChunks = [], isRecording = false, recordStartTime = 0;
         let onlineChannel = null, currentRoomId = 'public', currentChatType = 'public', currentGroupId = null, currentChatFriend = null;
         let pendingRequestId = null, allUsersCache = [], localStream = null, callChannel = null, pc = null, currentOffer = null;
-        let pendingIceCandidates = [];   // ✅ 关键修复：缓存 pc 创建前收到的 ICE 候选
+        let pendingIceCandidates = [];
+        let callSessionId = 0;   // ✅ 关键修复：通话会话 ID，用于让 in-flight 的 getUserMedia 失效
         let friendsMap = {}, myGroups = [];
         const rtcConfig = {
             iceServers: [
@@ -1510,10 +1510,8 @@
         let pendingVoiceBlob = null;
         let pendingVoiceDuration = 0;
         const SpeechRecognitionCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-        let speechSupported = !!SpeechRecognitionCtor;   // ✅ 改成 let，方便运行时禁用
+        let speechSupported = !!SpeechRecognitionCtor;
 
-        // ✅ 关键修复 1：安卓环境预检，避免"未找到 Google 引擎"
-        //    国产浏览器、WebView、HBuilderX 打包的 APK 都不带 Google 语音服务
         (function detectSpeechEngine() {
             if (!speechSupported) return;
             const ua = navigator.userAgent || '';
@@ -2616,7 +2614,6 @@
                     if (finals) speechFinalTranscript += finals;
                     speechInterimTranscript = interims;
                 };
-                // ✅ 关键修复 2：捕获运行时错误，永久禁用，避免反复弹"未找到 Google 引擎"
                 speechRecognition.onerror = (evt) => {
                     console.warn('[轻聊] 语音识别错误:', evt.error);
                     if (evt.error === 'service-not-allowed' ||
@@ -2845,16 +2842,19 @@
             } catch (e) { alert('切换摄像头失败'); }
         }
 
-        // ✅ 关键修复 3：挂断时停止一切音频采集，避免"持续录音"
+        // ✅ 关键修复：cleanupCall 让 in-flight 的 getUserMedia 失效
         function cleanupCall() {
+            // ✅ 核心：使所有正在 await 的 startCall/acceptCall 会话失效
+            callSessionId++;
+
             // 1. 停止 WebRTC 本地媒体流
             if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
             if (pc) { pc.close(); pc = null; }
 
-            // 2. 停止语音识别（它单独持有麦克风，不停的话安卓红点一直亮）
+            // 2. 停止语音识别
             stopSpeechRecognition();
 
-            // 3. 如果正在录语音消息，也一并停止
+            // 3. 停止正在录制的语音消息
             if (isRecording) {
                 try { mediaRecorder && mediaRecorder.stop(); } catch(e) {}
                 isRecording = false;
@@ -2883,7 +2883,6 @@
         async function startCall(type) {
             if (!currentChatFriend) return;
 
-            // 关键修复：提前抓取值到局部常量，避免回调里 currentChatFriend 被清空
             const peerId = currentChatFriend.id;
             const peerName = currentChatFriend.name;
 
@@ -2898,7 +2897,8 @@
             }
 
             callType = type;
-            cleanupCall();
+            cleanupCall();                                  // ← 会 ++callSessionId
+            const mySession = callSessionId;                // ✅ 记住本次会话 ID
             document.getElementById('call-screen').classList.remove('hidden');
             updateCallControls();
 
@@ -2917,14 +2917,24 @@
                 document.getElementById('call-status').innerText = '视频通话';
             }
 
+            let stream;
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' });
-                document.getElementById('local-video').srcObject = localStream;
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: type === 'video' });
             } catch (e) {
                 alert('无法获取摄像头/麦克风');
                 cleanupCall();
                 return;
             }
+
+            // ✅ 关键修复：检查会话是否还有效（可能已被 call-reject 取消）
+            if (mySession !== callSessionId) {
+                console.log('[轻聊] 呼叫期间已被取消/拒绝，停止新获取的流');
+                stream.getTracks().forEach(t => t.stop());
+                return;
+            }
+
+            localStream = stream;
+            document.getElementById('local-video').srcObject = localStream;
 
             pc = new RTCPeerConnection(rtcConfig);
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -2953,7 +2963,7 @@
                     callChannel.send({
                         type: 'broadcast',
                         event: 'ice-candidate',
-                        payload: { to: peerId, candidate: event.candidate }   // ✅ 用局部常量
+                        payload: { to: peerId, candidate: event.candidate }
                     });
                 }
             };
@@ -2961,7 +2971,6 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            // ✅ flush 缓存的候选（极少情况对方候选先到）
             if (pendingIceCandidates.length > 0) {
                 for (const c of pendingIceCandidates) {
                     try { await pc.addIceCandidate(new RTCIceCandidate(c)); } catch(e) {}
@@ -2975,7 +2984,7 @@
                 event: 'call-offer',
                 payload: {
                     from: currentUser.id,
-                    to: peerId,                                            // ✅ 用局部常量
+                    to: peerId,
                     type: type,
                     sdp: offerSdp
                 }
@@ -2986,10 +2995,12 @@
         async function acceptCall() {
             if (!currentOffer) return;
 
-            // ✅ 关键修复：提前抓取 from 到局部常量，避免 currentOffer = null 后回调报错
             const peerId = currentOffer.from;
             const remoteSdp = currentOffer.sdp;
             const offerType = currentOffer.type;
+
+            // ✅ 进入 acceptCall 就创建一个新会话 ID（等同 cleanupCall 的效果）
+            const mySession = ++callSessionId;
 
             callType = offerType;
             document.getElementById('incoming-call-modal').classList.add('hidden');
@@ -3010,10 +3021,20 @@
                 document.getElementById('call-status').innerText = '视频通话';
             }
 
+            let stream;
             try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' });
-                document.getElementById('local-video').srcObject = localStream;
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' });
             } catch (e) { rejectCall(); return; }
+
+            // ✅ 检查会话是否还有效
+            if (mySession !== callSessionId) {
+                console.log('[轻聊] 接听期间已被取消/挂断，停止新获取的流');
+                stream.getTracks().forEach(t => t.stop());
+                return;
+            }
+
+            localStream = stream;
+            document.getElementById('local-video').srcObject = localStream;
 
             pc = new RTCPeerConnection(rtcConfig);
             localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
@@ -3042,14 +3063,13 @@
                     callChannel.send({
                         type: 'broadcast',
                         event: 'ice-candidate',
-                        payload: { to: peerId, candidate: event.candidate }   // ✅ 用局部常量
+                        payload: { to: peerId, candidate: event.candidate }
                     });
                 }
             };
 
             await pc.setRemoteDescription(new RTCSessionDescription(remoteSdp));
 
-            // ✅ flush 缓存的候选
             if (pendingIceCandidates.length > 0) {
                 console.log('[轻聊] 开始 flush 缓存的 candidate，共', pendingIceCandidates.length, '个');
                 for (const c of pendingIceCandidates) {
@@ -3065,7 +3085,7 @@
             callChannel.send({
                 type: 'broadcast',
                 event: 'call-answer',
-                payload: { to: peerId, sdp: answerSdp }   // ✅ 用局部常量
+                payload: { to: peerId, sdp: answerSdp }
             });
             currentOffer = null;
         }
@@ -3095,7 +3115,6 @@
         function toggleCamera() { if (!localStream) return; const t = localStream.getVideoTracks()[0]; if (!t) return; t.enabled = !t.enabled; const btn = document.getElementById('camera-btn'); if (btn) btn.classList.toggle('muted', !t.enabled); }
 
         function initCallSignaling() {
-            // ✅ 防重复订阅：已 joined 直接跳过
             if (callChannel && callChannel.state === 'joined') {
                 console.log('[轻聊] callChannel 已订阅，跳过重建');
                 return;
@@ -3110,7 +3129,6 @@
                 config: { broadcast: { self: false } }
             });
 
-            // ============ call-offer ============
             callChannel.on('broadcast', { event: 'call-offer' }, (p) => {
                 try {
                     console.log('[轻聊] 收到 call-offer:', p);
@@ -3129,7 +3147,6 @@
                 } catch (e) { console.error('[轻聊] 处理 call-offer 失败:', e); }
             });
 
-            // ============ call-answer ============
             callChannel.on('broadcast', { event: 'call-answer' }, async (p) => {
                 try {
                     console.log('[轻聊] 收到 call-answer:', p);
@@ -3140,12 +3157,10 @@
                 } catch (e) { console.error('[轻聊] 处理 call-answer 失败:', e); }
             });
 
-            // ============ ice-candidate ============
             callChannel.on('broadcast', { event: 'ice-candidate' }, async (p) => {
                 try {
                     if (!p || !p.payload) return;
                     if (String(p.payload.to) !== String(currentUser.id)) return;
-                    // ✅ 关键修复：pc 未就绪时先缓存
                     if (!pc || !pc.remoteDescription) {
                         console.log('[轻聊] pc 未就绪，缓存 candidate，当前缓存数:', pendingIceCandidates.length + 1);
                         pendingIceCandidates.push(p.payload.candidate);
@@ -3156,7 +3171,6 @@
                 } catch (e) { console.error('[轻聊] 处理 ice-candidate 失败:', e); }
             });
 
-            // ============ call-hangup ============
             callChannel.on('broadcast', { event: 'call-hangup' }, (p) => {
                 try {
                     if (!p || !p.payload) return;
@@ -3166,14 +3180,13 @@
                 } catch (e) { console.error(e); }
             });
 
-            // ============ call-reject ============
             callChannel.on('broadcast', { event: 'call-reject' }, (p) => {
                 try {
                     if (!p || !p.payload) return;
                     if (String(p.payload.to) !== String(currentUser.id)) return;
                     console.log('[轻聊] 对方拒绝');
                     alert('对方拒绝了通话');
-                    cleanupCall();
+                    cleanupCall();   // ✅ 会 ++callSessionId，让 startCall 里 in-flight 的 getUserMedia 失效
                 } catch (e) { console.error(e); }
             });
 
