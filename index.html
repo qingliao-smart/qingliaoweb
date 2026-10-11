@@ -201,6 +201,13 @@
         @keyframes typingBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         @keyframes recBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
         @keyframes lightboxIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes eggShake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-4px); }
+            40% { transform: translateX(4px); }
+            60% { transform: translateX(-3px); }
+            80% { transform: translateX(3px); }
+        }
 
         .glass-card {
             background: var(--surface);
@@ -665,6 +672,7 @@
             font-size: 14px; font-family: inherit; outline: none;
         }
         .search-box input::placeholder { color: var(--text-tertiary); }
+        .search-box.egg-shake { animation: eggShake 0.4s ease; }
 
         .user-list { flex: 1; overflow-y: auto; }
         .modal-user-item {
@@ -1093,6 +1101,41 @@
 
             .emoji-btn { font-size: 18px; min-width: 28px; min-height: 28px; }
         }
+
+        /* ============================================================
+           彩蛋 · 全屏视频播放器
+           ============================================================ */
+        #easter-egg-overlay {
+            position: fixed; inset: 0;
+            background: rgba(0, 0, 0, 0.96);
+            backdrop-filter: blur(20px) saturate(120%);
+            -webkit-backdrop-filter: blur(20px) saturate(120%);
+            z-index: 9999;
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0; visibility: hidden;
+            transition: opacity 0.4s ease, visibility 0.4s;
+            cursor: pointer;
+        }
+        #easter-egg-overlay.show { opacity: 1; visibility: visible; }
+        #easter-egg-overlay video {
+            max-width: 90vw; max-height: 85vh;
+            border-radius: var(--r-lg);
+            box-shadow: 0 20px 80px rgba(0, 0, 0, 0.8),
+                        0 0 0 1px rgba(255, 255, 255, 0.08);
+            transform: scale(0.88);
+            transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            background: #000;
+        }
+        #easter-egg-overlay.show video { transform: scale(1); }
+        .easter-egg-hint {
+            position: absolute; bottom: 40px; left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.45);
+            font-size: 13px; letter-spacing: 0.18em;
+            font-family: ui-monospace, monospace;
+            animation: pulse 2s ease-in-out infinite;
+            user-select: none;
+        }
     </style>
 </head>
 <body data-m-view="list" data-theme="modern">
@@ -1189,6 +1232,12 @@
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
         <img id="lightbox-img" src="" alt="" onclick="event.stopPropagation()">
+    </div>
+
+    <!-- 彩蛋 · 全屏视频播放器 -->
+    <div id="easter-egg-overlay" onclick="closeEasterEgg()">
+        <video id="easter-egg-video" playsinline preload="auto"></video>
+        <div class="easter-egg-hint">点击任意处关闭</div>
     </div>
 
     <div id="main-app" class="hidden">
@@ -1480,7 +1529,7 @@
         let onlineChannel = null, currentRoomId = 'public', currentChatType = 'public', currentGroupId = null, currentChatFriend = null;
         let pendingRequestId = null, allUsersCache = [], localStream = null, callChannel = null, pc = null, currentOffer = null;
         let pendingIceCandidates = [];
-        let callSessionId = 0;   // ✅ 关键修复：通话会话 ID，用于让 in-flight 的 getUserMedia 失效
+        let callSessionId = 0;
         let friendsMap = {}, myGroups = [];
         const rtcConfig = {
             iceServers: [
@@ -1535,6 +1584,69 @@
         function isDevUser() {
             if (!currentUser) return false;
             return currentUser.isAdmin === true;
+        }
+
+        /* ============================================================
+           蔡徐坤彩蛋
+           ============================================================ */
+        const EASTER_EGG_KEYS = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
+        // 修改此路径为你实际上传的视频地址（相对路径或完整 URL）
+        const EASTER_EGG_VIDEO_URL = 'assets/cxk.mp4';
+        const FORBIDDEN_USERNAMES = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
+
+        let easterEggPlaying = false;
+
+        function checkEasterEgg(keyword) {
+            if (easterEggPlaying) return false;
+            const kw = (keyword || '').trim();
+            if (!kw) return false;
+            const matched = EASTER_EGG_KEYS.some(k => k.toLowerCase() === kw.toLowerCase());
+            if (matched) {
+                const box = document.querySelector('.search-box');
+                if (box) {
+                    box.classList.add('egg-shake');
+                    setTimeout(() => box.classList.remove('egg-shake'), 500);
+                }
+                playEasterEgg();
+                return true;
+            }
+            return false;
+        }
+
+        function playEasterEgg() {
+            const overlay = document.getElementById('easter-egg-overlay');
+            const video = document.getElementById('easter-egg-video');
+            if (!overlay || !video) return;
+
+            easterEggPlaying = true;
+            const picker = document.getElementById('emoji-picker');
+            if (picker) picker.classList.add('hidden');
+
+            video.src = EASTER_EGG_VIDEO_URL;
+            try { video.currentTime = 0; } catch (e) {}
+            video.volume = 0.9;
+            overlay.classList.add('show');
+
+            if (navigator.vibrate) { try { navigator.vibrate([30, 50, 30]); } catch (e) {} }
+
+            const p = video.play();
+            if (p && typeof p.catch === 'function') {
+                p.catch(err => console.warn('[彩蛋] 视频播放失败:', err));
+            }
+            video.onended = () => closeEasterEgg();
+        }
+
+        function closeEasterEgg() {
+            const overlay = document.getElementById('easter-egg-overlay');
+            const video = document.getElementById('easter-egg-video');
+            if (!overlay || !video) return;
+            overlay.classList.remove('show');
+            try { video.pause(); } catch (e) {}
+            video.removeAttribute('src');
+            try { video.load(); } catch (e) {}
+            easterEggPlaying = false;
+            const si = document.getElementById('search-user-input');
+            if (si) si.value = '';
         }
 
         /* ============================================================
@@ -1667,6 +1779,7 @@
         document.addEventListener('keydown', (e) => {
             if (e.key !== 'Escape') return;
             closeLightbox();
+            closeEasterEgg();
             const picker = document.getElementById('emoji-picker');
             if (picker) picker.classList.add('hidden');
             document.querySelectorAll('.modal:not(.hidden)').forEach(m => {
@@ -1878,6 +1991,13 @@
                     currentUser = { ...u, isAdmin: u.is_admin === true };
                     showTip('登录成功，正在加载...', false);
                 } else {
+                    // ✅ 禁用彩蛋用户名注册
+                    if (FORBIDDEN_USERNAMES.some(n => n.toLowerCase() === account.toLowerCase())) {
+                        showTip('该用户名不可注册', true);
+                        alert('该用户名不可注册，请换一个～');
+                        return;
+                    }
+                    if (/[\s\u3000]/.test(account)) { showTip('用户名不能包含空格', true); alert('用户名不能包含空格'); return; }
                     if (!secQ || !secA) { showTip('新用户注册必须填密保', true); alert('首次注册需要填写密保问题和答案'); return; }
                     const isFirstAdmin = (account === 'xhz');
                     let code = account === 'xhz' ? '88888888' : Math.floor(10000000 + Math.random() * 90000000).toString();
@@ -1945,6 +2065,7 @@
             if (!newNick) { alert('请输入新用户名'); return; }
             if (newNick === oldNick) { alert('新用户名和当前一样'); return; }
             if (!/^[\u4e00-\u9fa5A-Za-z0-9_]{3,20}$/.test(newNick)) { alert('用户名只支持 3-20 位中文、字母、数字、下划线'); return; }
+            if (FORBIDDEN_USERNAMES.some(n => n.toLowerCase() === newNick.toLowerCase())) { alert('该用户名不可使用'); return; }
             const now = Date.now();
             const oneWeek = 7 * 24 * 60 * 60 * 1000;
             const history = (currentUser.nickname_changed_at || []).filter(t => (now - t) < oneWeek);
@@ -2161,7 +2282,20 @@
         async function showAddFriendModal() { document.getElementById('add-friend-modal').classList.remove('hidden'); document.getElementById('search-user-input').value = ''; await loadAllUsers(); }
         function hideAddFriendModal() { document.getElementById('add-friend-modal').classList.add('hidden'); }
         async function loadAllUsers() { const { data } = await supabaseClient.from('chat_users').select('id, nickname, friend_code, avatar_url'); allUsersCache = data ? data.filter(u => u.id !== currentUser.id) : []; allUsersCache.forEach(u => { if (u.avatar_url) avatarCache[u.id] = u.avatar_url; }); await renderUserList(allUsersCache); }
-        function filterUserList() { const keyword = document.getElementById('search-user-input').value.trim().toLowerCase(); if (!keyword) return renderUserList(allUsersCache); renderUserList(allUsersCache.filter(u => (u.nickname || '').toLowerCase().includes(keyword) || (u.friend_code || '').includes(keyword))); }
+
+        // ✅ 彩蛋触发点：完全匹配才触发
+        function filterUserList() {
+            const keyword = document.getElementById('search-user-input').value.trim();
+
+            if (checkEasterEgg(keyword)) return;
+
+            if (!keyword) return renderUserList(allUsersCache);
+            const kw = keyword.toLowerCase();
+            renderUserList(allUsersCache.filter(u =>
+                (u.nickname || '').toLowerCase().includes(kw) ||
+                (u.friend_code || '').includes(keyword)
+            ));
+        }
 
         async function renderUserList(users) {
             const list = document.getElementById('all-users-list');
@@ -2842,19 +2976,14 @@
             } catch (e) { alert('切换摄像头失败'); }
         }
 
-        // ✅ 关键修复：cleanupCall 让 in-flight 的 getUserMedia 失效
         function cleanupCall() {
-            // ✅ 核心：使所有正在 await 的 startCall/acceptCall 会话失效
             callSessionId++;
 
-            // 1. 停止 WebRTC 本地媒体流
             if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
             if (pc) { pc.close(); pc = null; }
 
-            // 2. 停止语音识别
             stopSpeechRecognition();
 
-            // 3. 停止正在录制的语音消息
             if (isRecording) {
                 try { mediaRecorder && mediaRecorder.stop(); } catch(e) {}
                 isRecording = false;
@@ -2862,12 +2991,10 @@
                 if (vbtn) vbtn.classList.remove('recording');
             }
 
-            // 4. 清空 audio/video 元素
             const aud = document.getElementById('remote-audio'); if (aud) aud.srcObject = null;
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
 
-            // 5. UI 复原
             document.getElementById('call-screen').classList.add('hidden');
             document.getElementById('incoming-call-modal').classList.add('hidden');
             document.getElementById('voice-call-ui').classList.add('hidden');
@@ -2897,8 +3024,8 @@
             }
 
             callType = type;
-            cleanupCall();                                  // ← 会 ++callSessionId
-            const mySession = callSessionId;                // ✅ 记住本次会话 ID
+            cleanupCall();
+            const mySession = callSessionId;
             document.getElementById('call-screen').classList.remove('hidden');
             updateCallControls();
 
@@ -2926,7 +3053,6 @@
                 return;
             }
 
-            // ✅ 关键修复：检查会话是否还有效（可能已被 call-reject 取消）
             if (mySession !== callSessionId) {
                 console.log('[轻聊] 呼叫期间已被取消/拒绝，停止新获取的流');
                 stream.getTracks().forEach(t => t.stop());
@@ -2999,7 +3125,6 @@
             const remoteSdp = currentOffer.sdp;
             const offerType = currentOffer.type;
 
-            // ✅ 进入 acceptCall 就创建一个新会话 ID（等同 cleanupCall 的效果）
             const mySession = ++callSessionId;
 
             callType = offerType;
@@ -3026,7 +3151,6 @@
                 stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: callType === 'video' });
             } catch (e) { rejectCall(); return; }
 
-            // ✅ 检查会话是否还有效
             if (mySession !== callSessionId) {
                 console.log('[轻聊] 接听期间已被取消/挂断，停止新获取的流');
                 stream.getTracks().forEach(t => t.stop());
@@ -3186,7 +3310,7 @@
                     if (String(p.payload.to) !== String(currentUser.id)) return;
                     console.log('[轻聊] 对方拒绝');
                     alert('对方拒绝了通话');
-                    cleanupCall();   // ✅ 会 ++callSessionId，让 startCall 里 in-flight 的 getUserMedia 失效
+                    cleanupCall();
                 } catch (e) { console.error(e); }
             });
 
