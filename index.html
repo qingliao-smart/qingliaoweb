@@ -1136,6 +1136,20 @@
             animation: pulse 2s ease-in-out infinite;
             user-select: none;
         }
+        .easter-egg-error {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: #FF6B6B;
+            font-size: 14px; text-align: center;
+            padding: 20px 30px;
+            background: rgba(0, 0, 0, 0.7);
+            border: 1px solid rgba(255, 107, 107, 0.4);
+            border-radius: var(--r-lg);
+            line-height: 1.8;
+            max-width: 80vw;
+            font-family: ui-monospace, monospace;
+            z-index: 10000;
+        }
     </style>
 </head>
 <body data-m-view="list" data-theme="modern">
@@ -1590,8 +1604,8 @@
            蔡徐坤彩蛋
            ============================================================ */
         const EASTER_EGG_KEYS = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
-        // 修改此路径为你实际上传的视频地址（相对路径或完整 URL）
-        const EASTER_EGG_VIDEO_URL = 'assets/cxk.mp4';
+        // ✅ 视频放在仓库根目录，直接写文件名
+        const EASTER_EGG_VIDEO_URL = 'cxk.mp4';
         const FORBIDDEN_USERNAMES = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
 
         let easterEggPlaying = false;
@@ -1622,6 +1636,29 @@
             const picker = document.getElementById('emoji-picker');
             if (picker) picker.classList.add('hidden');
 
+            // 移除旧错误提示
+            const oldErr = overlay.querySelector('.easter-egg-error');
+            if (oldErr) oldErr.remove();
+
+            // 加错误处理：加载失败会显示具体原因
+            video.onerror = function () {
+                let reason = '未知错误';
+                if (video.error) {
+                    switch (video.error.code) {
+                        case 1: reason = '加载被中止 (MEDIA_ERR_ABORTED)'; break;
+                        case 2: reason = '网络错误 (MEDIA_ERR_NETWORK)'; break;
+                        case 3: reason = '解码失败 (MEDIA_ERR_DECODE) — 可能是编码不支持'; break;
+                        case 4: reason = '格式不支持或文件 404 (MEDIA_ERR_SRC_NOT_SUPPORTED)'; break;
+                    }
+                }
+                const errDiv = document.createElement('div');
+                errDiv.className = 'easter-egg-error';
+                errDiv.innerHTML = '⚠️ 视频加载失败<br>' + reason +
+                    '<br><br>路径：' + EASTER_EGG_VIDEO_URL +
+                    '<br>请检查：<br>1. 文件是否在仓库根目录<br>2. 文件名大小写是否一致<br>3. 视频编码是否为 H.264 + AAC';
+                overlay.appendChild(errDiv);
+            };
+
             video.src = EASTER_EGG_VIDEO_URL;
             try { video.currentTime = 0; } catch (e) {}
             video.volume = 0.9;
@@ -1641,6 +1678,8 @@
             const video = document.getElementById('easter-egg-video');
             if (!overlay || !video) return;
             overlay.classList.remove('show');
+            const errDiv = overlay.querySelector('.easter-egg-error');
+            if (errDiv) errDiv.remove();
             try { video.pause(); } catch (e) {}
             video.removeAttribute('src');
             try { video.load(); } catch (e) {}
