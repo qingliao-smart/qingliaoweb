@@ -1150,6 +1150,16 @@
             font-family: ui-monospace, monospace;
             z-index: 10000;
         }
+        .easter-egg-loading {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 15px;
+            letter-spacing: 0.2em;
+            font-family: ui-monospace, monospace;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
     </style>
 </head>
 <body data-m-view="list" data-theme="modern">
@@ -1250,7 +1260,7 @@
 
     <!-- 彩蛋 · 全屏视频播放器 -->
     <div id="easter-egg-overlay" onclick="closeEasterEgg()">
-        <video id="easter-egg-video" playsinline preload="auto"></video>
+        <video id="easter-egg-video" playsinline preload="none"></video>
         <div class="easter-egg-hint">点击任意处关闭</div>
     </div>
 
@@ -1603,31 +1613,38 @@
         /* ============================================================
            蔡徐坤彩蛋
            ============================================================ */
-        const EASTER_EGG_KEYS = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
-        // ✅ 视频放在仓库根目录，直接写文件名
-        const EASTER_EGG_VIDEO_URL = 'cxk.mp4';
-        const FORBIDDEN_USERNAMES = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美'];
+        // 口令 → 视频 映射表（大小写不敏感）
+        const EASTER_EGG_MAP = {
+            '坤坤nb666': 'cxk.mp4',
+            '蔡徐坤':    'jiacxk.mp4',
+            '坤坤':      'jiacxk.mp4',
+            '坤坤nb':    'jiacxk.mp4',
+            '鸡你太美':   'jiacxk.mp4'
+        };
+        // 注册时禁止使用的用户名（含彩蛋口令）
+        const FORBIDDEN_USERNAMES = ['蔡徐坤', '坤坤', '坤坤NB', '鸡你太美', '坤坤NB666'];
 
         let easterEggPlaying = false;
 
         function checkEasterEgg(keyword) {
             if (easterEggPlaying) return false;
-            const kw = (keyword || '').trim();
+            const kw = (keyword || '').trim().toLowerCase();
             if (!kw) return false;
-            const matched = EASTER_EGG_KEYS.some(k => k.toLowerCase() === kw.toLowerCase());
-            if (matched) {
+
+            const videoUrl = EASTER_EGG_MAP[kw];
+            if (videoUrl) {
                 const box = document.querySelector('.search-box');
                 if (box) {
                     box.classList.add('egg-shake');
                     setTimeout(() => box.classList.remove('egg-shake'), 500);
                 }
-                playEasterEgg();
+                playEasterEgg(videoUrl);
                 return true;
             }
             return false;
         }
 
-        function playEasterEgg() {
+        function playEasterEgg(videoUrl) {
             const overlay = document.getElementById('easter-egg-overlay');
             const video = document.getElementById('easter-egg-video');
             if (!overlay || !video) return;
@@ -1636,12 +1653,26 @@
             const picker = document.getElementById('emoji-picker');
             if (picker) picker.classList.add('hidden');
 
-            // 移除旧错误提示
+            // 清除旧提示
             const oldErr = overlay.querySelector('.easter-egg-error');
             if (oldErr) oldErr.remove();
+            const oldLoading = overlay.querySelector('.easter-egg-loading');
+            if (oldLoading) oldLoading.remove();
 
-            // 加错误处理：加载失败会显示具体原因
+            // 加载中提示
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'easter-egg-loading';
+            loadingDiv.innerText = '加载中...';
+            overlay.appendChild(loadingDiv);
+
+            video.onloadeddata = function () {
+                const l = overlay.querySelector('.easter-egg-loading');
+                if (l) l.remove();
+            };
+
             video.onerror = function () {
+                const l = overlay.querySelector('.easter-egg-loading');
+                if (l) l.remove();
                 let reason = '未知错误';
                 if (video.error) {
                     switch (video.error.code) {
@@ -1654,12 +1685,12 @@
                 const errDiv = document.createElement('div');
                 errDiv.className = 'easter-egg-error';
                 errDiv.innerHTML = '⚠️ 视频加载失败<br>' + reason +
-                    '<br><br>路径：' + EASTER_EGG_VIDEO_URL +
+                    '<br><br>路径：' + videoUrl +
                     '<br>请检查：<br>1. 文件是否在仓库根目录<br>2. 文件名大小写是否一致<br>3. 视频编码是否为 H.264 + AAC';
                 overlay.appendChild(errDiv);
             };
 
-            video.src = EASTER_EGG_VIDEO_URL;
+            video.src = videoUrl;
             try { video.currentTime = 0; } catch (e) {}
             video.volume = 0.9;
             overlay.classList.add('show');
@@ -1680,6 +1711,8 @@
             overlay.classList.remove('show');
             const errDiv = overlay.querySelector('.easter-egg-error');
             if (errDiv) errDiv.remove();
+            const loadingDiv = overlay.querySelector('.easter-egg-loading');
+            if (loadingDiv) loadingDiv.remove();
             try { video.pause(); } catch (e) {}
             video.removeAttribute('src');
             try { video.load(); } catch (e) {}
@@ -2030,7 +2063,7 @@
                     currentUser = { ...u, isAdmin: u.is_admin === true };
                     showTip('登录成功，正在加载...', false);
                 } else {
-                    // ✅ 禁用彩蛋用户名注册
+                    // 禁用彩蛋用户名注册
                     if (FORBIDDEN_USERNAMES.some(n => n.toLowerCase() === account.toLowerCase())) {
                         showTip('该用户名不可注册', true);
                         alert('该用户名不可注册，请换一个～');
@@ -2322,12 +2355,10 @@
         function hideAddFriendModal() { document.getElementById('add-friend-modal').classList.add('hidden'); }
         async function loadAllUsers() { const { data } = await supabaseClient.from('chat_users').select('id, nickname, friend_code, avatar_url'); allUsersCache = data ? data.filter(u => u.id !== currentUser.id) : []; allUsersCache.forEach(u => { if (u.avatar_url) avatarCache[u.id] = u.avatar_url; }); await renderUserList(allUsersCache); }
 
-        // ✅ 彩蛋触发点：完全匹配才触发
+        // 彩蛋触发点
         function filterUserList() {
             const keyword = document.getElementById('search-user-input').value.trim();
-
             if (checkEasterEgg(keyword)) return;
-
             if (!keyword) return renderUserList(allUsersCache);
             const kw = keyword.toLowerCase();
             renderUserList(allUsersCache.filter(u =>
