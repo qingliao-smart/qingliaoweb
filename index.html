@@ -1368,7 +1368,7 @@
     <div id="add-friend-modal" class="modal hidden">
         <div class="modal-content">
             <div class="modal-header"><h3>添加好友</h3><button class="icon-btn" onclick="hideAddFriendModal()"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></button></div>
-            <div class="search-box"><svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--text-tertiary);stroke-width:2;fill:none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input type="text" id="search-user-input" placeholder="搜索用户名或好友码" oninput="filterUserList()"></div>
+            <div class="search-box"><svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:var(--text-tertiary);stroke-width:2;fill:none"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input type="text" id="search-user-input" placeholder="搜索用户名或好友码（回车触发）" oninput="filterUserList()" onkeydown="onSearchKeyDown(event)"></div>
             <div id="all-users-list" class="user-list"></div>
         </div>
     </div>
@@ -1653,13 +1653,11 @@
             const picker = document.getElementById('emoji-picker');
             if (picker) picker.classList.add('hidden');
 
-            // 清除旧提示
             const oldErr = overlay.querySelector('.easter-egg-error');
             if (oldErr) oldErr.remove();
             const oldLoading = overlay.querySelector('.easter-egg-loading');
             if (oldLoading) oldLoading.remove();
 
-            // 加载中提示
             const loadingDiv = document.createElement('div');
             loadingDiv.className = 'easter-egg-loading';
             loadingDiv.innerText = '加载中...';
@@ -2355,16 +2353,28 @@
         function hideAddFriendModal() { document.getElementById('add-friend-modal').classList.add('hidden'); }
         async function loadAllUsers() { const { data } = await supabaseClient.from('chat_users').select('id, nickname, friend_code, avatar_url'); allUsersCache = data ? data.filter(u => u.id !== currentUser.id) : []; allUsersCache.forEach(u => { if (u.avatar_url) avatarCache[u.id] = u.avatar_url; }); await renderUserList(allUsersCache); }
 
-        // 彩蛋触发点
+        // 普通搜索：只筛选用户，不触发彩蛋
         function filterUserList() {
             const keyword = document.getElementById('search-user-input').value.trim();
-            if (checkEasterEgg(keyword)) return;
             if (!keyword) return renderUserList(allUsersCache);
             const kw = keyword.toLowerCase();
             renderUserList(allUsersCache.filter(u =>
                 (u.nickname || '').toLowerCase().includes(kw) ||
                 (u.friend_code || '').includes(keyword)
             ));
+        }
+
+        // 回车才触发彩蛋
+        function onSearchKeyDown(e) {
+            if (e.key !== 'Enter') return;
+            const input = document.getElementById('search-user-input');
+            const keyword = (input.value || '').trim();
+            if (!keyword) return;
+            if (checkEasterEgg(keyword)) {
+                e.preventDefault();
+                e.stopPropagation();
+                input.value = '';
+            }
         }
 
         async function renderUserList(users) {
